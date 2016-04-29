@@ -1,0 +1,175 @@
+---
+title: "Kobe"
+author: "Alexandru Papiu"
+date: "April 16, 2016"
+output: html_document
+---
+
+This is a quick look at the dataset and some of the features. 
+
+Loading in the data:
+```{r, message = FALSE, warning = FALSE}
+library(dplyr)
+library(ggplot2)
+data <- read.csv("data.csv", stringsAsFactors = FALSE)
+
+train <- data[!is.na(data$shot_made_flag),]
+test <- data[is.na(data$shot_made_flag),]
+
+train$shot_made_flag <- as.factor(train$shot_made_flag)
+```
+
+We have quite a few features in this data set: 
+```{r}
+names(train)
+```
+
+I am curious about two things to begin with: the location of the shots on the court and how Kobe's accuracy is related to certain factors. Let's make two functions, one called `pplot` that plots the accuracy by factor levels and another called `courtplot` that maps features by position.
+
+```{r}
+
+train$shot_made_flag <- factor(train$shot_made_flag, levels = c("1", "0"))
+
+#a plot to see accuracy by feature
+pplot <- function(feat) {
+    feat <- substitute(feat)
+    ggplot(data = train, aes_q(x = feat)) +
+        geom_bar(aes(fill = shot_made_flag), stat = "count", position = "fill") +
+    scale_fill_brewer(palette = "Set1", direction = -1) +
+     ggtitle(paste("accuracy by", feat))
+
+}
+
+# a plot to see position by feature
+courtplot <- function(feat) {
+        feat <- substitute(feat)
+    train %>% 
+    ggplot(aes(x = lon, y = lat)) +
+        geom_point(aes_q(color = feat), alpha = 0.7, size = 3) +
+        ylim(c(33.7, 34.0883)) +
+        scale_color_brewer(palette = "Set1") +
+        theme_void() +
+        ggtitle(paste(feat))
+}
+```
+
+Let's take a look at the locations for the various shot_types.
+```{r, warning = FALSE}
+courtplot(combined_shot_type) #hard to see here.
+```
+
+Hmm this is a bit hard to see because of the large number of Jump Shots. Let's try to keep the Jump Shots in the background and focus on the fancier shots.
+
+```{r}
+ggplot() +
+    geom_point(data = filter(train, combined_shot_type == "Jump Shot"),
+               aes(x = lon, y = lat), color = "grey", alpha = 0.3, size = 2) +
+    geom_point(data = filter(train, combined_shot_type != "Jump Shot"),
+                   aes(x = lon, y = lat, 
+                       color = combined_shot_type), alpha = 0.7, size = 3) +
+    ylim(c(33.7, 34.0883)) +
+    scale_color_brewer(palette = "Set1") +
+    theme_void() +
+    ggtitle("Shot Types")
+```
+
+Hmm let's zoom in a bit and look at shots, distance 5 or less from the basket. We'll color these based on whether Kobe made them in(1) or no(0).
+```{r}
+ggplot() +
+        geom_point(data = filter(train, combined_shot_type != "Jump Shot",
+                                 shot_distance < 5),
+                       aes(x = loc_x, y = loc_y, 
+                           color = shot_made_flag),
+                   alpha = 0.7, size = 3) +
+        scale_color_brewer(palette = "Set1") +
+        geom_point(aes(x =0, y = 0), size = 5, shape = 4) +
+    theme_void() +
+    ggtitle("Shots from up close")
+```
+
+Let's also take a look at all the shots plotted on the court and color them based on whether Kobe made them or not:
+
+```{r, fig.width= 10}
+
+ggplot(train, aes(x = loc_x, y = loc_y)) +
+    geom_point(aes(color = shot_made_flag), alpha = 0.5, size = 0.5) +
+    ylim(c(-50, 400)) +
+    theme_void() +
+    scale_color_brewer(palette = "Set1") +
+    facet_grid(~ shot_made_flag) +
+    labs(title = "Shots Made(Blue) vs. Shots Missed(Red)")
+    
+```
+
+We're overplotting a bit here but we can see that distance has a strong effect on the accuracy.
+
+
+Another way to try to see how see how accuracy depends on the field is the split the x or y axis into bins and measure accuracy for each bin. Let's do that for the x axis (i.e the width of the field):
+
+```{r}
+train$x_bins <- cut(train$loc_x, breaks = 25)
+pplot(x_bins) + geom_bar() + ggtitle("Shot Distribution by x_bins") +
+    theme(axis.text.x = element_blank())
+```
+
+This is a nice looking distribution. Clearly most shots are being made under the basket but interestingly we have another two local maxima on the left and right sides. My guess here is that when Kobe gets close enough to the basket it pays off to try to push a little harder to get even closer and do a "fancier"" shot from the Restricted Area than to try a Jump shot.
+
+```{r}
+pplot(x_bins) + theme(axis.text.x = element_blank())
+```
+The accuracies above look roughly symmetric with a few minor bumps on the right side of the court. These bumps however could be just due to chance since we don't have that many shots from that area.
+
+
+
+The first column `action_type` semes informative but there are too many factor levels to properly see what's going on. Let's take the least common shot types and rename them as `Other`.
+```{r}
+train %>% count(action_type) %>%
+    arrange(desc(n)) %>% filter(n < 20) -> actions
+train$action_type[train$action_type %in% actions$action_type] <- "Other"
+```
+
+Now let's look at the accuracy by shot type:
+```{r}
+
+prop.table(table(train$action_type, train$shot_made_flag),1) -> temp
+as.data.frame.matrix(temp) -> temp
+temp$shot <- rownames(temp)
+ggplot(temp, aes(x = reorder(shot, `1`), y = 1)) +
+geom_point(aes(y = `1`), size = 3, color = " dark blue", stat = "identity") +
+    coord_flip() +
+    labs(y = "Accuracy", x = "", title = "Accuracy by Shot_type")
+```
+
+Quite an interesting result. The more detailed action types give a more granular description of accuracy. For example, while Kobe makes about 92% of his Dunk Shots, he makes over 97% of the fancier dunk types like:`Slam Dunk Shot` and `Alley Oop Dunk`. Also check out some of these shot types: `Driving Finger Roll Layup Shot` - now that's a cool sounding shot.
+
+
+Let's also plot the different spatial features:
+```{r}
+courtplot(shot_zone_area)
+courtplot(shot_zone_basic) 
+courtplot(shot_zone_range)
+```
+
+And let's look at different factors plotted by accuracy:
+```{r, warning = FALSE}
+pplot(minutes_remaining)
+pplot(period)
+pplot(seconds_remaining)
+```
+
+Kobe seems pretty consistent throught the game with the expection of a decrease in accuracy when he shoots in the last second of the play. Let's also take a look at the histogram by `seconds_remaining`
+
+```{r}
+pplot(seconds_remaining) + geom_bar() + ggtitle("Histogram of Shots by second_remaining")
+```
+
+
+```{r}
+pplot(season) + coord_flip()
+pplot(shot_distance) + xlim(0, 60)
+pplot(combined_shot_type)
+pplot(shot_type)
+pplot(shot_zone_area) + coord_flip()
+pplot(shot_zone_basic) + coord_flip()
+pplot(opponent) + coord_flip()
+```
